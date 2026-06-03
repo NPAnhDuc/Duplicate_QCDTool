@@ -1,0 +1,12 @@
+# Cấu hình môi trường
+.env
+
+# Database cục bộ
+chroma_db/
+
+# Python cache
+__pycache__/
+
+# File dữ liệu tạm thời
+*.xlsx
+*.csv
