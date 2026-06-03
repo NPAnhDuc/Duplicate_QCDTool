@@ -43,7 +43,7 @@ project/
 
 ## 2. Cấu hình file .env
 
-Tạo file `.env` cùng thư mục với `app_appVTDB.py`:
+Tạo file .env cùng thư mục với appVTDB.py:
 
 ```env
 GEMINI_API_KEY=AIzaSy...your_key_here
@@ -249,6 +249,7 @@ Nhấn **🗑️ Xoá DB** khi cần:
 ### ❌ `Thiếu GEMINI_API_KEY hoặc JIRA_API_TOKEN`
 - Kiểm tra file `.env` có đúng thư mục không
 - Mở terminal mới và chạy lại `streamlit run app_vecterDB.py`
+- Mở terminal mới và chạy lại `streamlit run appVTDB.py`
 
 ### ❌ `Jira API lỗi 401 / 403`
 - Token Jira đã hết hạn → vào Jira tạo token mới, cập nhật `.env`
