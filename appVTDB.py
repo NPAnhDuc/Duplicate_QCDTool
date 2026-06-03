@@ -1077,10 +1077,7 @@ with tab_run:
             jira_key = m["jira_key"]
             raw_s = m.get("score_raw", m["score"])
             adj_s = m["score"]
-            score_display = (
-                f"{adj_s}% (gốc {raw_s}% -10pts market)"
-                if raw_s != adj_s else f"{adj_s}%"
-            )
+            score_display = f"{adj_s}%"
             row.update({
                 "Jira_Link":      f"{JIRA_URL}/browse/{jira_key}" if jira_key else "",
                 "Jira_Summary":   m.get("jira_summary", ""),
