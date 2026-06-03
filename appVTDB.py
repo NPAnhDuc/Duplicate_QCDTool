@@ -417,7 +417,7 @@ def extract_zones(raw_desc: str) -> dict:
                 best_pos, best_len = idx, len(m)
         return (best_pos if best_pos <= len(text) else -1), best_len
 
-    def extract_section(start_pos, start_len, stop_markers, max_chars=600):
+    def extract_section(start_pos, start_len, stop_markers):
         if start_pos == -1:
             return ""
         content_start = start_pos + start_len
@@ -426,32 +426,32 @@ def extract_zones(raw_desc: str) -> dict:
             idx = lower.find(sm, content_start)
             if idx != -1 and idx < end_pos:
                 end_pos = idx
-        return text[content_start:end_pos].strip()[:max_chars]
+        return text[content_start:end_pos].strip()
 
     # Observation — lấy marker CUỐI CÙNG (actual result thực sự)
     obs_pos, obs_len = find_last(OBS_MARKERS)
     if obs_pos != -1:
-        observation = extract_section(obs_pos, obs_len, EXP_MARKERS + END_MARKERS, 600)
+        observation = extract_section(obs_pos, obs_len, EXP_MARKERS + END_MARKERS)
     else:
         # Thay vì lấy đuôi, hãy quét các dòng chứa từ khóa mang tính hành vi lỗi
         lines = text.split('\n')
         error_lines = [l for l in lines if any(k in l.lower() for k in ['fail', 'error', 'wrong', 'not', 'issue', 'bug', 'bị'])]
         if error_lines:
-            observation = " ".join(error_lines)[:500]
+            observation = " ".join(error_lines)
         else:
-            observation = text[:500] # Lấy phần đầu (thường mô tả lỗi luôn) thay vì lấy phần đuôi log nhiễu
+            observation = text # Lấy toàn bộ text nếu không phân vùng được
 
     # Expected, Procedure — lấy marker đầu tiên
     exp_pos,  exp_len  = find_first(EXP_MARKERS)
     proc_pos, proc_len = find_first(PROC_MARKERS)
 
-    expected  = extract_section(exp_pos,  exp_len,  OBS_MARKERS + PROC_MARKERS + END_MARKERS, 300)
-    procedure = extract_section(proc_pos, proc_len, EXP_MARKERS + OBS_MARKERS  + END_MARKERS, 300)
+    expected  = extract_section(exp_pos,  exp_len,  OBS_MARKERS + PROC_MARKERS + END_MARKERS)
+    procedure = extract_section(proc_pos, proc_len, EXP_MARKERS + OBS_MARKERS  + END_MARKERS)
 
     return {
-        "observation": observation[:500],
-        "expected":    expected[:250],
-        "procedure":   procedure[:250],
+        "observation": observation,
+        "expected":    expected,
+        "procedure":   procedure,
     }
 
 def extract_core_summary(summary: str) -> str:
@@ -534,8 +534,9 @@ def sync_jira_to_vector_db(df: pd.DataFrame, progress_placeholder=None) -> dict:
             "key":         key,
             "summary_raw": summary,
             "observation": zones["observation"],
-            "expected":    zones["expected"][:200],
-            "procedure":   zones["procedure"][:200],
+            "expected":    zones["expected"],
+            "procedure":   zones["procedure"],
+            "description_raw": desc, # Lưu full description để xuất file
             "status":      status,
             "markets":     market,
             "synced_at":   datetime.now().isoformat()
@@ -875,6 +876,7 @@ with tab_run:
             "idx":         i,
             "summary":     extract_core_summary(summary),
             "summary_raw": summary,
+            "description_raw": desc,
             "observation": zones["observation"],
             "expected":    zones["expected"],
             "procedure":   zones["procedure"],
@@ -937,11 +939,12 @@ with tab_run:
             m = results["metadatas"][0][i]
             candidates.append({
                 "jira_key":  m.get("key", ""),
-                "summary":   m.get("summary_raw", "")[:400],
-                "actual":    m.get("observation", "")[:800],
-                "expected":  m.get("expected", "")[:300],
-                "procedure": m.get("procedure", "")[:200],
+                "summary":   m.get("summary_raw", ""),
+                "actual":    m.get("observation", ""),
+                "expected":  m.get("expected", ""),
+                "procedure": m.get("procedure", ""),
                 "markets":   m.get("markets", ""),
+                "description_full": m.get("description_raw", ""),
             })
             if len(candidates) >= top_k:
                 break   # đủ top_k candidates sạch
@@ -1012,6 +1015,12 @@ with tab_run:
                     adj_score = raw_score
                     mkt_note  = ""
 
+                # Lấy dữ liệu full từ candidate record
+                cand_info = next((c for c in candidates if c["jira_key"] == r_key), {})
+                jira_full_desc = cand_info.get("description_full", "")
+                if not jira_full_desc: # Fallback nếu DB cũ chưa có description_raw
+                    jira_full_desc = f"Actual: {cand_info.get('actual','')}\nExpected: {cand_info.get('expected','')}\nSteps: {cand_info.get('procedure','')}"
+
                 # Re-classify sau khi điều chỉnh (phù hợp score floors mới)
                 if   adj_score >= 88: adj_cls = "DUPLICATE"
                 elif adj_score >= 70: adj_cls = "NEAR_DUP"
@@ -1028,6 +1037,8 @@ with tab_run:
                             "classification": adj_cls,
                             "reason":         f"{r.get('reason', '')}{mkt_note}",
                             "jira_market":    jira_mkt,
+                            "jira_summary":   cand_info.get("summary", ""),
+                            "jira_description": jira_full_desc,
                         }
 
             if best:
@@ -1051,13 +1062,15 @@ with tab_run:
         row = {
             "NEW_Summary":    item["summary_raw"],
             "NEW_Market":     item.get("markets", ""),
-            "NEW_Observation":item["observation"][:150],
-            "Jira_Match":     "",
-            "Jira_Market":    "",
+            "NEW_Observation":item["description_raw"],
             "Jira_Link":      "",
+            "Jira_Summary":   "",
+            "Jira_Market":    "",
+            "Jira_Description": "",
             "Score":          "",
             "Classification": "",
             "Lý do match":    "Không phát hiện trùng lặp. Đủ điều kiện tạo mới.",
+            "Note":           "",
             "_score_val":     0,
         }
         if m:
@@ -1069,9 +1082,10 @@ with tab_run:
                 if raw_s != adj_s else f"{adj_s}%"
             )
             row.update({
-                "Jira_Match":     jira_key,
-                "Jira_Market":    m.get("jira_market", ""),
                 "Jira_Link":      f"{JIRA_URL}/browse/{jira_key}" if jira_key else "",
+                "Jira_Summary":   m.get("jira_summary", ""),
+                "Jira_Market":    m.get("jira_market", ""),
+                "Jira_Description": m.get("jira_description", ""),
                 "Score":          score_display,
                 "Classification": m["classification"],
                 "Lý do match":    m["reason"],
@@ -1116,10 +1130,10 @@ with tab_run:
     for i, row in result_df.iterrows():
         cls   = row["Classification"]
         score = row["Score"]
-        summary = row["NEW_Summary"][:90]
+        summary_display = row["NEW_Summary"][:90]
 
         tag_html = classification_tag(cls)
-        with st.expander(f"{tag_html} &nbsp; [{score or '—'}] &nbsp; {summary}", expanded=False):
+        with st.expander(f"{tag_html} &nbsp; [{score or '—'}] &nbsp; {summary_display}", expanded=False):
             col_left, col_right = st.columns([1, 1])
             with col_left:
                 st.markdown("**🆕 NEW Ticket**")
@@ -1127,10 +1141,10 @@ with tab_run:
                 if row.get("NEW_Market"):
                     st.markdown(f"**Market:** `{row['NEW_Market']}`")
                 if row["NEW_Observation"]:
-                    st.markdown(f"**Observation:** {row['NEW_Observation']}")
+                    st.markdown(f"**Observation:** {row['NEW_Observation'][:1000]}") # Chỉ giới hạn hiển thị UI, Excel vẫn full
             with col_right:
-                if row["Jira_Match"]:
-                    st.markdown(f"**🔗 JIRA Match:** [{row['Jira_Match']}]({row['Jira_Link']})")
+                if row["Jira_Summary"]:
+                    st.markdown(f"**🔗 JIRA Match:** {row['Jira_Link']}")
                     if row.get("Jira_Market"):
                         st.markdown(f"**Market (Jira):** `{row['Jira_Market']}`")
                     st.markdown(f"**Score:** `{score}` &nbsp; **Classification:** `{cls}`")
@@ -1150,7 +1164,9 @@ with tab_run:
     # ── Download ──
     st.divider()
     buf = io.BytesIO()
-    result_df.to_excel(buf, index=False)
+    # Chỉ lấy các cột user yêu cầu cho file Excel
+    export_cols = ["NEW_Summary", "NEW_Market", "NEW_Observation", "Jira_Link", "Jira_Summary", "Jira_Market", "Jira_Description", "Score", "Classification", "Lý do match", "Note"]
+    result_df[export_cols].to_excel(buf, index=False)
     st.download_button(
         "📥 Tải kết quả (.xlsx)",
         buf.getvalue(),
